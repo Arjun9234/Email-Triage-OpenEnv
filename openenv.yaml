@@ -1,0 +1,62 @@
+name: email-triage-openenv
+title: Real-World Email Triage Environment
+version: 2.1.0
+description: >
+  A deterministic OpenEnv environment for enterprise inbox triage. Agents must process
+  business emails with realistic priorities, spam risk, and follow-up needs.
+
+tags:
+  - openenv
+  - email-triage
+  - customer-support
+  - workflow-automation
+
+authors:
+  - name: Hackathon Team
+
+license: MIT
+
+environment:
+  entrypoint: server/main.py
+  framework: fastapi
+  deterministic: true
+  max_episode_steps:
+    easy: 14
+    medium: 22
+    hard: 30
+
+api:
+  base_url: http://localhost:8000
+  endpoints:
+    reset:
+      method: POST
+      path: /reset
+      body:
+        task: easy|medium|hard
+        session_id: string
+      returns: success,session_id,observation,state
+    step:
+      method: POST
+      path: /step
+      body:
+        action: read|archive|delete|flag|move_to_folder|mark_spam
+        email_id: string
+        details: object
+        session_id: string
+      returns: success,session_id,observation,reward,done,info,state
+    state:
+      method: GET
+      path: /state
+      query:
+        session_id: string
+      returns: environment_state
+    grade:
+      method: GET
+      path: /grade
+      query:
+        session_id: string
+      returns: score_0_to_1
+    tasks:
+      method: GET
+      path: /tasks
+      returns: available_tasks
