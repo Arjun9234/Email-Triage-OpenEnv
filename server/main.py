@@ -206,21 +206,24 @@ async def root():
 
 
 @app.post("/reset")
-async def reset(request: ResetRequest) -> dict:
+async def reset(request: ResetRequest | None = None) -> dict:
     """
     Reset the environment and start a new task
 
     Args:
-        request: ResetRequest with task name (easy, medium, hard)
+        request: ResetRequest with task name (easy, medium, hard) - optional
 
     Returns:
         Initial observation
     """
     _ensure_sessions_loaded()
     try:
+        # Use defaults if request is None or fields are missing
+        task = (request.task if request and request.task else "easy") or "easy"
+        session_id = _normalize_session_id(request.session_id if request else None)
+
         with _store_lock:
-            session_id = _normalize_session_id(request.session_id)
-            env_sessions[session_id] = EmailTriageEnv(task=request.task)
+            env_sessions[session_id] = EmailTriageEnv(task=task)
             obs = env_sessions[session_id].reset()
             _persist_sessions()
 
