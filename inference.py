@@ -155,11 +155,11 @@ def load_runtime_config() -> None:
 
     # The validator injects variables directly into os.environ, so we read from there.
     # We do NOT use load_dotenv() for inference.py runs, as it can shadow injected vars.
-    API_BASE_URL = os.environ.get("API_BASE_URL", "")
-    API_KEY = os.environ.get("API_KEY", "")
-    MODEL_NAME = os.environ.get("MODEL_NAME", "")
-    HF_TOKEN = os.environ.get("HF_TOKEN", "")
-    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+    API_BASE_URL = os.environ.get("API_BASE_URL", "").strip()
+    API_KEY = os.environ.get("API_KEY", "").strip()
+    MODEL_NAME = os.environ.get("MODEL_NAME", "").strip()
+    HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
     ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:8000").rstrip("/")
     MAX_STEPS_PER_TASK = int(os.environ.get("MAX_STEPS_PER_TASK", "40"))
     FORCE_HEURISTIC = os.environ.get("FORCE_HEURISTIC", "").lower() in {"1", "true", "yes", "on"}
@@ -204,7 +204,7 @@ def pick_action_with_llm(client: OpenAI, email: dict[str, Any]) -> str:
         return "archive"
     except Exception as exc:  # noqa: BLE001
         if not _FALLBACK_NOTICE_SHOWN:
-            print(f"LLM request failed ({exc}). Falling back to deterministic heuristic policy.")
+            print(f"LLM request failed ({exc}). Falling back to deterministic heuristic policy.", flush=True)
             _FALLBACK_NOTICE_SHOWN = True
         FORCE_HEURISTIC = True
         return heuristic_action(email)
@@ -307,10 +307,12 @@ def main() -> None:
     load_runtime_config()
 
     # Debug: print loaded configuration
-    print(f"[DEBUG] API_BASE_URL={API_BASE_URL[:30]}..." if API_BASE_URL else f"[DEBUG] API_BASE_URL=<empty>", flush=True)
+    api_url_display = f"{API_BASE_URL[:50]}..." if len(API_BASE_URL) > 50 else API_BASE_URL
+    print(f"[DEBUG] API_BASE_URL={api_url_display if API_BASE_URL else '<empty>'}", flush=True)
     print(f"[DEBUG] API_KEY={'<set>' if API_KEY else '<empty>'}", flush=True)
-    print(f"[DEBUG] MODEL_NAME={MODEL_NAME}", flush=True)
+    print(f"[DEBUG] MODEL_NAME={MODEL_NAME if MODEL_NAME else '<empty>'}", flush=True)
     print(f"[DEBUG] HF_TOKEN={'<set>' if HF_TOKEN else '<empty>'}", flush=True)
+    print(f"[DEBUG] OPENAI_API_KEY={'<set>' if OPENAI_API_KEY else '<empty>'}", flush=True)
     print(f"[DEBUG] FORCE_HEURISTIC={FORCE_HEURISTIC} (before require_env)", flush=True)
 
     require_env()
@@ -319,6 +321,11 @@ def main() -> None:
 
     client = build_client()
     print(f"[DEBUG] client={'<created>' if client else '<None>'}", flush=True)
+
+    if client:
+        print(f"[DEBUG] Using validator-injected API: {api_url_display}", flush=True)
+    else:
+        print(f"[DEBUG] No validator API available. Using heuristic fallback.", flush=True)
 
     tasks = ["easy", "medium", "hard"]
     results = [run_task(client, task) for task in tasks]
