@@ -2,6 +2,8 @@
 
 Required environment variables:
 - API_BASE_URL: LLM endpoint base URL (for OpenAI-compatible APIs)
+
+Optional model variables (used only when LLM is enabled):
 - MODEL_NAME: model identifier
 - HF_TOKEN or OPENAI_API_KEY: API key for the LLM endpoint
 
@@ -43,18 +45,31 @@ SYSTEM_PROMPT = (
 
 
 def require_env() -> None:
+    global FORCE_HEURISTIC, MODEL_NAME
+
     llm_key = HF_TOKEN or OPENAI_API_KEY
+    llm_ready = bool(API_BASE_URL and MODEL_NAME and llm_key)
+    if llm_ready:
+        return
+
+    FORCE_HEURISTIC = True
+    if not MODEL_NAME:
+        MODEL_NAME = "heuristic-fallback"
+
     missing = [
         name
         for name, value in {
             "API_BASE_URL": API_BASE_URL,
-            "MODEL_NAME": MODEL_NAME,
+            "MODEL_NAME": MODEL_NAME if MODEL_NAME != "heuristic-fallback" else "",
             "HF_TOKEN|OPENAI_API_KEY": llm_key,
         }.items()
         if not value
     ]
-    if missing:
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+    print(
+        "LLM configuration incomplete "
+        f"({', '.join(missing) if missing else 'unknown reason'}). "
+        "Using deterministic heuristic policy."
+    )
 
 
 def heuristic_action(email: dict[str, Any]) -> str:
@@ -171,7 +186,7 @@ def load_runtime_config() -> None:
 def pick_action_with_llm(client: OpenAI, email: dict[str, Any]) -> str:
     global _FALLBACK_NOTICE_SHOWN, FORCE_HEURISTIC
 
-    if FORCE_HEURISTIC:
+    if FORCE_HEURISTIC or client is None:
         return heuristic_action(email)
 
     prompt = (
@@ -214,57 +229,79 @@ def pick_action_with_llm(client: OpenAI, email: dict[str, Any]) -> str:
 
 
 def run_task(client: OpenAI, task: str) -> dict[str, Any]:
-    with httpx.Client(timeout=30.0) as http:
-        reset = http.post(f"{ENV_BASE_URL}/reset", json={"task": task})
-        reset.raise_for_status()
+    try:
+        with httpx.Client(timeout=30.0) as http:
+            reset = http.post(f"{ENV_BASE_URL}/reset", json={"task": task})
+            reset.raise_for_status()
 
-        done = False
-        steps = 0
-        step_reward_sum = 0.0
+            done = False
+            steps = 0
+            step_reward_sum = 0.0
 
-        while not done and steps < MAX_STEPS_PER_TASK:
-            obs_resp = http.get(f"{ENV_BASE_URL}/observation")
-            obs_resp.raise_for_status()
-            obs = obs_resp.json()
-            current_email = obs.get("current_email")
+            while not done and steps < MAX_STEPS_PER_TASK:
+                obs_resp = http.get(f"{ENV_BASE_URL}/observation")
+                obs_resp.raise_for_status()
+                obs = obs_resp.json()
+                current_email = obs.get("current_email")
 
-            if current_email is None:
-                break
+                if current_email is None:
+                    break
 
-            action = pick_action_with_llm(client, current_email)
-            step = http.post(
-                f"{ENV_BASE_URL}/step",
-                json={"action": action, "email_id": current_email["id"], "details": {}},
-            )
-            step.raise_for_status()
-            payload = step.json()
+                action = pick_action_with_llm(client, current_email)
+                step = http.post(
+                    f"{ENV_BASE_URL}/step",
+                    json={"action": action, "email_id": current_email["id"], "details": {}},
+                )
+                step.raise_for_status()
+                payload = step.json()
 
-            reward_obj = payload.get("reward", {})
-            step_reward_sum += float(reward_obj.get("score", 0.0))
-            done = bool(payload.get("done", False))
-            steps += 1
+                reward_obj = payload.get("reward", {})
+                step_reward_sum += float(reward_obj.get("score", 0.0))
+                done = bool(payload.get("done", False))
+                steps += 1
 
-        grade = http.get(f"{ENV_BASE_URL}/grade")
-        grade.raise_for_status()
-        grade_json = grade.json()
+            grade = http.get(f"{ENV_BASE_URL}/grade")
+            grade.raise_for_status()
+            grade_json = grade.json()
 
-        total_emails = grade_json.get("total_emails", 1)
-        normalized_trajectory_reward = step_reward_sum / total_emails if total_emails > 0 else 0.0
+            total_emails = grade_json.get("total_emails", 1)
+            normalized_trajectory_reward = step_reward_sum / total_emails if total_emails > 0 else 0.0
 
+            return {
+                "task": task,
+                "steps": steps,
+                "normalized_trajectory_reward": round(normalized_trajectory_reward, 4),
+                "grader_score": float(grade_json.get("score", 0.0)),
+                "grader_status": grade_json.get("status", "unknown"),
+                "grader_breakdown": grade_json.get("breakdown", {}),
+            }
+    except Exception as exc:  # noqa: BLE001
+        print(f"Task '{task}' failed: {exc}")
         return {
             "task": task,
-            "steps": steps,
-            "normalized_trajectory_reward": round(normalized_trajectory_reward, 4),
-            "grader_score": float(grade_json.get("score", 0.0)),
-            "grader_status": grade_json.get("status", "unknown"),
-            "grader_breakdown": grade_json.get("breakdown", {}),
+            "steps": 0,
+            "normalized_trajectory_reward": 0.0,
+            "grader_score": 0.0,
+            "grader_status": "error",
+            "grader_breakdown": {},
+            "error": str(exc),
         }
+
+
+def build_client() -> OpenAI | None:
+    if FORCE_HEURISTIC:
+        return None
+    try:
+        return OpenAI(base_url=API_BASE_URL, api_key=(HF_TOKEN or OPENAI_API_KEY))
+    except Exception as exc:  # noqa: BLE001
+        print(f"OpenAI client initialization failed ({exc}). Using deterministic heuristic policy.")
+        return None
 
 
 def main() -> None:
     load_runtime_config()
     require_env()
-    client = OpenAI(base_url=API_BASE_URL, api_key=(HF_TOKEN or OPENAI_API_KEY))
+    client = build_client()
 
     tasks = ["easy", "medium", "hard"]
     results = [run_task(client, task) for task in tasks]
@@ -281,4 +318,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:  # noqa: BLE001
+        output = {
+            "env_base_url": ENV_BASE_URL,
+            "model_name": MODEL_NAME or "heuristic-fallback",
+            "temperature": TEMPERATURE,
+            "tasks": [],
+            "average_score": 0.0,
+            "error": str(exc),
+        }
+        print(json.dumps(output, indent=2))
