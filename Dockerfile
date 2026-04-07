@@ -11,6 +11,7 @@ COPY server/requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip && pip install -r requirements.txt
 
 COPY server/ server/
+COPY inference.py ./inference.py
 COPY openenv.yaml ./openenv.yaml
 
 RUN mkdir -p server/.runtime

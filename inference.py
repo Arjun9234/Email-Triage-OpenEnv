@@ -17,12 +17,10 @@ from __future__ import annotations
 import json
 import os
 import re
-from pathlib import Path
 from typing import Any
 
 import httpx
 from openai import OpenAI
-from dotenv import dotenv_values, load_dotenv
 
 API_BASE_URL = ""
 API_KEY = ""
@@ -151,40 +149,20 @@ def heuristic_action(email: dict[str, Any]) -> str:
 
 
 def load_runtime_config() -> None:
-    """Load env vars from common project locations and initialize globals."""
+    """Load environment variables. Validator injects these directly into os.environ."""
 
     global API_BASE_URL, API_KEY, MODEL_NAME, HF_TOKEN, OPENAI_API_KEY, ENV_BASE_URL, MAX_STEPS_PER_TASK, FORCE_HEURISTIC
 
-    root_dir = Path(__file__).resolve().parent
-    root_env_path = root_dir / ".env"
-    server_env_path = root_dir / "server" / ".env"
-
-    # Keep local .env support, but always prioritize injected environment
-    # variables (validator/runtime) over file-based defaults.
-    load_dotenv(root_env_path, override=False)
-    load_dotenv(server_env_path, override=False)
-
-    root_env = dotenv_values(root_env_path)
-    server_env = dotenv_values(server_env_path)
-
-    def resolved(name: str, default: str = "") -> str:
-        # Check injected env vars FIRST, then fall back to files
-        injected = os.getenv(name)
-        if injected:
-            return str(injected).strip()
-        file_value = server_env.get(name) or root_env.get(name)
-        if file_value:
-            return str(file_value).strip()
-        return default
-
-    API_BASE_URL = resolved("API_BASE_URL")
-    API_KEY = resolved("API_KEY")  # Validator injects this
-    MODEL_NAME = resolved("MODEL_NAME")
-    HF_TOKEN = resolved("HF_TOKEN")
-    OPENAI_API_KEY = resolved("OPENAI_API_KEY")
-    ENV_BASE_URL = resolved("ENV_BASE_URL", "http://localhost:8000").rstrip("/")
-    MAX_STEPS_PER_TASK = int(resolved("MAX_STEPS_PER_TASK", "40"))
-    FORCE_HEURISTIC = resolved("FORCE_HEURISTIC", "false").lower() in {"1", "true", "yes", "on"}
+    # The validator injects variables directly into os.environ, so we read from there.
+    # We do NOT use load_dotenv() for inference.py runs, as it can shadow injected vars.
+    API_BASE_URL = os.environ.get("API_BASE_URL", "")
+    API_KEY = os.environ.get("API_KEY", "")
+    MODEL_NAME = os.environ.get("MODEL_NAME", "")
+    HF_TOKEN = os.environ.get("HF_TOKEN", "")
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+    ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:8000").rstrip("/")
+    MAX_STEPS_PER_TASK = int(os.environ.get("MAX_STEPS_PER_TASK", "40"))
+    FORCE_HEURISTIC = os.environ.get("FORCE_HEURISTIC", "").lower() in {"1", "true", "yes", "on"}
 
 
 def pick_action_with_llm(client: OpenAI, email: dict[str, Any]) -> str:
