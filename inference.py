@@ -46,11 +46,13 @@ SYSTEM_PROMPT = (
 def require_env() -> None:
     global FORCE_HEURISTIC, MODEL_NAME
 
-    # Validator provides API_BASE_URL + API_KEY + MODEL_NAME; use them if available.
-    has_api_proxy = bool(API_BASE_URL and API_KEY and MODEL_NAME)
+    # Validator provides API_BASE_URL + API_KEY; MODEL_NAME may be omitted.
+    has_api_proxy = bool(API_BASE_URL and API_KEY)
 
     if has_api_proxy:
         # Validator-provided API is ready.
+        if not MODEL_NAME:
+            MODEL_NAME = "gpt-4o-mini"
         FORCE_HEURISTIC = False
         return
 
@@ -157,8 +159,14 @@ def load_runtime_config() -> None:
     # The validator injects variables directly into os.environ, so we read from there.
     # We do NOT use load_dotenv() for inference.py runs, as it can shadow injected vars.
     API_BASE_URL = os.environ.get("API_BASE_URL", "").strip()
-    API_KEY = os.environ.get("API_KEY", "").strip()
+    API_KEY = (
+        os.environ.get("API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+        or os.environ.get("HF_TOKEN", "").strip()
+    )
     MODEL_NAME = os.environ.get("MODEL_NAME", "").strip()
+    if not MODEL_NAME:
+        MODEL_NAME = "gpt-4o-mini"
     HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
     ENV_BASE_URL = os.environ.get("ENV_BASE_URL", "http://localhost:8000").rstrip("/")
@@ -288,7 +296,11 @@ def build_client() -> OpenAI | None:
     # This ensures all API calls go through the LiteLLM proxy
     # Read directly from os.environ - validator injects these at runtime
     api_base_url = os.environ.get("API_BASE_URL", "").strip()
-    api_key = os.environ.get("API_KEY", "").strip()
+    api_key = (
+        os.environ.get("API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+        or os.environ.get("HF_TOKEN", "").strip()
+    )
 
     # Only create client if we have both endpoint and key from validator
     if not api_base_url:
