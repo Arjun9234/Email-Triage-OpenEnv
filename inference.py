@@ -50,35 +50,22 @@ def require_env() -> None:
 
     # Validator provides API_BASE_URL + API_KEY; use them if available.
     has_api_proxy = bool(API_BASE_URL and API_KEY)
-    
+
     if has_api_proxy:
-        # Validator-provided API is ready, even if MODEL_NAME is missing.
-        # MODEL_NAME will be injected as part of the proxy behavior.
+        # Validator-provided API is ready.
         FORCE_HEURISTIC = False
         return
 
-    # Fallback path: local development without validator proxy.
-    llm_key = HF_TOKEN or OPENAI_API_KEY
-    llm_ready = bool(API_BASE_URL and MODEL_NAME and llm_key)
-    if llm_ready:
-        return
-
+    # No validator proxy available
     FORCE_HEURISTIC = True
     if not MODEL_NAME:
         MODEL_NAME = "heuristic-fallback"
 
-    missing = [
-        name
-        for name, value in {
-            "API_BASE_URL": API_BASE_URL,
-            "API_KEY|HF_TOKEN|OPENAI_API_KEY": API_KEY or llm_key,
-        }.items()
-        if not value
-    ]
     print(
-        "LLM configuration incomplete "
-        f"({', '.join(missing) if missing else 'unknown reason'}). "
-        "Using deterministic heuristic policy."
+        f"No LLM API available. Using deterministic heuristic policy. "
+        f"(API_BASE_URL={'set' if API_BASE_URL else 'empty'}, "
+        f"API_KEY={'set' if API_KEY else 'empty'})",
+        flush=True
     )
 
 
@@ -181,8 +168,14 @@ def load_runtime_config() -> None:
     server_env = dotenv_values(server_env_path)
 
     def resolved(name: str, default: str = "") -> str:
-        value = os.getenv(name) or server_env.get(name) or root_env.get(name) or default
-        return str(value).strip() if value is not None else default
+        # Check injected env vars FIRST, then fall back to files
+        injected = os.getenv(name)
+        if injected:
+            return str(injected).strip()
+        file_value = server_env.get(name) or root_env.get(name)
+        if file_value:
+            return str(file_value).strip()
+        return default
 
     API_BASE_URL = resolved("API_BASE_URL")
     API_KEY = resolved("API_KEY")  # Validator injects this
@@ -312,20 +305,23 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
 
 
 def build_client() -> OpenAI | None:
-    # Prefer validator-provided API_KEY if available.
-    api_key = API_KEY or HF_TOKEN or OPENAI_API_KEY
-    
-    # Only create client if we have both endpoint and key.
-    if not API_BASE_URL or not api_key:
-        if FORCE_HEURISTIC:
-            return None
-        print("No LLM credentials available. Using deterministic heuristic policy.")
+    # ONLY use validator-provided API_KEY; never fallback to local credentials
+    # This ensures all API calls go through the LiteLLM proxy
+    api_key = API_KEY
+
+    # Only create client if we have both endpoint and key from validator
+    if not API_BASE_URL:
+        print(f"Missing API_BASE_URL. Using heuristic policy. API_BASE_URL='{API_BASE_URL}'", flush=True)
         return None
-    
+
+    if not api_key:
+        print(f"Missing API_KEY from validator. Using heuristic policy.", flush=True)
+        return None
+
     try:
         return OpenAI(base_url=API_BASE_URL, api_key=api_key)
     except Exception as exc:  # noqa: BLE001
-        print(f"OpenAI client initialization failed ({exc}). Using deterministic heuristic policy.")
+        print(f"OpenAI client initialization failed ({exc}). Using heuristic policy.", flush=True)
         return None
 
 
