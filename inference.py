@@ -314,14 +314,12 @@ def build_client() -> OpenAI | None:
     # Prefer validator-provided API_KEY if available.
     api_key = API_KEY or HF_TOKEN or OPENAI_API_KEY
     
-    if not api_key or not API_BASE_URL:
+    # Only create client if we have both endpoint and key.
+    if not API_BASE_URL or not api_key:
         if FORCE_HEURISTIC:
             return None
-        try:
-            return OpenAI(base_url=API_BASE_URL, api_key=api_key)
-        except Exception as exc:  # noqa: BLE001
-            print(f"OpenAI client initialization failed ({exc}). Using deterministic heuristic policy.")
-            return None
+        print("No LLM credentials available. Using deterministic heuristic policy.")
+        return None
     
     try:
         return OpenAI(base_url=API_BASE_URL, api_key=api_key)
