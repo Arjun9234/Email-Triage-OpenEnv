@@ -54,6 +54,7 @@ def require_env() -> None:
     if has_api_proxy:
         # Validator-provided API is ready, even if MODEL_NAME is missing.
         # MODEL_NAME will be injected as part of the proxy behavior.
+        FORCE_HEURISTIC = False
         return
 
     # Fallback path: local development without validator proxy.
@@ -171,8 +172,8 @@ def load_runtime_config() -> None:
     root_env_path = root_dir / ".env"
     server_env_path = root_dir / "server" / ".env"
 
-    # Keep shell env vars for generic settings, but force inference-critical
-    # fields to follow server/.env first so token/model edits take effect.
+    # Keep local .env support, but always prioritize injected environment
+    # variables (validator/runtime) over file-based defaults.
     load_dotenv(root_env_path, override=False)
     load_dotenv(server_env_path, override=False)
 
@@ -180,7 +181,7 @@ def load_runtime_config() -> None:
     server_env = dotenv_values(server_env_path)
 
     def resolved(name: str, default: str = "") -> str:
-        value = server_env.get(name) or os.getenv(name) or root_env.get(name) or default
+        value = os.getenv(name) or server_env.get(name) or root_env.get(name) or default
         return str(value).strip() if value is not None else default
 
     API_BASE_URL = resolved("API_BASE_URL")
