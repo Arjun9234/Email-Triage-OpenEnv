@@ -230,6 +230,9 @@ def pick_action_with_llm(client: OpenAI, email: dict[str, Any]) -> str:
 
 def run_task(client: OpenAI, task: str) -> dict[str, Any]:
     try:
+        # Emit structured START block for validator.
+        print(f"[START] task={task}", flush=True)
+        
         with httpx.Client(timeout=30.0) as http:
             reset = http.post(f"{ENV_BASE_URL}/reset", json={"task": task})
             reset.raise_for_status()
@@ -256,9 +259,13 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
                 payload = step.json()
 
                 reward_obj = payload.get("reward", {})
-                step_reward_sum += float(reward_obj.get("score", 0.0))
+                step_reward = float(reward_obj.get("score", 0.0))
+                step_reward_sum += step_reward
                 done = bool(payload.get("done", False))
                 steps += 1
+                
+                # Emit structured STEP block for each action.
+                print(f"[STEP] step={steps} reward={step_reward:.4f}", flush=True)
 
             grade = http.get(f"{ENV_BASE_URL}/grade")
             grade.raise_for_status()
@@ -266,17 +273,22 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
 
             total_emails = grade_json.get("total_emails", 1)
             normalized_trajectory_reward = step_reward_sum / total_emails if total_emails > 0 else 0.0
+            grader_score = float(grade_json.get("score", 0.0))
+
+            # Emit structured END block for validator.
+            print(f"[END] task={task} score={grader_score:.4f} steps={steps}", flush=True)
 
             return {
                 "task": task,
                 "steps": steps,
                 "normalized_trajectory_reward": round(normalized_trajectory_reward, 4),
-                "grader_score": float(grade_json.get("score", 0.0)),
+                "grader_score": grader_score,
                 "grader_status": grade_json.get("status", "unknown"),
                 "grader_breakdown": grade_json.get("breakdown", {}),
             }
     except Exception as exc:  # noqa: BLE001
-        print(f"Task '{task}' failed: {exc}")
+        print(f"[END] task={task} score=0.0 steps=0", flush=True)
+        print(f"Task '{task}' failed: {exc}", flush=True)
         return {
             "task": task,
             "steps": 0,
