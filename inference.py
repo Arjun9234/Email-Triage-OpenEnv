@@ -285,11 +285,13 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
 def build_client() -> OpenAI | None:
     # ONLY use validator-provided API_KEY; never fallback to local credentials
     # This ensures all API calls go through the LiteLLM proxy
-    api_key = API_KEY
+    # Read directly from os.environ - validator injects these at runtime
+    api_base_url = os.environ.get("API_BASE_URL", "").strip()
+    api_key = os.environ.get("API_KEY", "").strip()
 
     # Only create client if we have both endpoint and key from validator
-    if not API_BASE_URL:
-        print(f"Missing API_BASE_URL. Using heuristic policy. API_BASE_URL='{API_BASE_URL}'", flush=True)
+    if not api_base_url:
+        print(f"Missing API_BASE_URL. Using heuristic policy.", flush=True)
         return None
 
     if not api_key:
@@ -297,7 +299,7 @@ def build_client() -> OpenAI | None:
         return None
 
     try:
-        return OpenAI(base_url=API_BASE_URL, api_key=api_key)
+        return OpenAI(base_url=api_base_url, api_key=api_key)
     except Exception as exc:  # noqa: BLE001
         print(f"OpenAI client initialization failed ({exc}). Using heuristic policy.", flush=True)
         return None
