@@ -25,6 +25,7 @@ from openai import OpenAI
 from dotenv import dotenv_values, load_dotenv
 
 API_BASE_URL = ""
+API_KEY = ""
 MODEL_NAME = ""
 HF_TOKEN = ""
 OPENAI_API_KEY = ""
@@ -47,6 +48,15 @@ SYSTEM_PROMPT = (
 def require_env() -> None:
     global FORCE_HEURISTIC, MODEL_NAME
 
+    # Validator provides API_BASE_URL + API_KEY; use them if available.
+    has_api_proxy = bool(API_BASE_URL and API_KEY)
+    
+    if has_api_proxy:
+        # Validator-provided API is ready, even if MODEL_NAME is missing.
+        # MODEL_NAME will be injected as part of the proxy behavior.
+        return
+
+    # Fallback path: local development without validator proxy.
     llm_key = HF_TOKEN or OPENAI_API_KEY
     llm_ready = bool(API_BASE_URL and MODEL_NAME and llm_key)
     if llm_ready:
@@ -60,8 +70,7 @@ def require_env() -> None:
         name
         for name, value in {
             "API_BASE_URL": API_BASE_URL,
-            "MODEL_NAME": MODEL_NAME if MODEL_NAME != "heuristic-fallback" else "",
-            "HF_TOKEN|OPENAI_API_KEY": llm_key,
+            "API_KEY|HF_TOKEN|OPENAI_API_KEY": API_KEY or llm_key,
         }.items()
         if not value
     ]
@@ -156,7 +165,7 @@ def heuristic_action(email: dict[str, Any]) -> str:
 def load_runtime_config() -> None:
     """Load env vars from common project locations and initialize globals."""
 
-    global API_BASE_URL, MODEL_NAME, HF_TOKEN, OPENAI_API_KEY, ENV_BASE_URL, MAX_STEPS_PER_TASK, FORCE_HEURISTIC
+    global API_BASE_URL, API_KEY, MODEL_NAME, HF_TOKEN, OPENAI_API_KEY, ENV_BASE_URL, MAX_STEPS_PER_TASK, FORCE_HEURISTIC
 
     root_dir = Path(__file__).resolve().parent
     root_env_path = root_dir / ".env"
@@ -175,6 +184,7 @@ def load_runtime_config() -> None:
         return str(value).strip() if value is not None else default
 
     API_BASE_URL = resolved("API_BASE_URL")
+    API_KEY = resolved("API_KEY")  # Validator injects this
     MODEL_NAME = resolved("MODEL_NAME")
     HF_TOKEN = resolved("HF_TOKEN")
     OPENAI_API_KEY = resolved("OPENAI_API_KEY")
@@ -301,10 +311,20 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
 
 
 def build_client() -> OpenAI | None:
-    if FORCE_HEURISTIC:
-        return None
+    # Prefer validator-provided API_KEY if available.
+    api_key = API_KEY or HF_TOKEN or OPENAI_API_KEY
+    
+    if not api_key or not API_BASE_URL:
+        if FORCE_HEURISTIC:
+            return None
+        try:
+            return OpenAI(base_url=API_BASE_URL, api_key=api_key)
+        except Exception as exc:  # noqa: BLE001
+            print(f"OpenAI client initialization failed ({exc}). Using deterministic heuristic policy.")
+            return None
+    
     try:
-        return OpenAI(base_url=API_BASE_URL, api_key=(HF_TOKEN or OPENAI_API_KEY))
+        return OpenAI(base_url=API_BASE_URL, api_key=api_key)
     except Exception as exc:  # noqa: BLE001
         print(f"OpenAI client initialization failed ({exc}). Using deterministic heuristic policy.")
         return None
