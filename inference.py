@@ -46,8 +46,8 @@ SYSTEM_PROMPT = (
 def require_env() -> None:
     global FORCE_HEURISTIC, MODEL_NAME
 
-    # Validator provides API_BASE_URL + API_KEY; use them if available.
-    has_api_proxy = bool(API_BASE_URL and API_KEY)
+    # Validator provides API_BASE_URL + API_KEY + MODEL_NAME; use them if available.
+    has_api_proxy = bool(API_BASE_URL and API_KEY and MODEL_NAME)
 
     if has_api_proxy:
         # Validator-provided API is ready.
@@ -62,7 +62,8 @@ def require_env() -> None:
     print(
         f"No LLM API available. Using deterministic heuristic policy. "
         f"(API_BASE_URL={'set' if API_BASE_URL else 'empty'}, "
-        f"API_KEY={'set' if API_KEY else 'empty'})",
+        f"API_KEY={'set' if API_KEY else 'empty'}, "
+        f"MODEL_NAME={'set' if MODEL_NAME else 'empty'})",
         flush=True
     )
 
@@ -168,7 +169,7 @@ def load_runtime_config() -> None:
 def pick_action_with_llm(client: OpenAI, email: dict[str, Any]) -> str:
     global _FALLBACK_NOTICE_SHOWN, FORCE_HEURISTIC
 
-    if FORCE_HEURISTIC or client is None:
+    if FORCE_HEURISTIC or client is None or not MODEL_NAME:
         return heuristic_action(email)
 
     prompt = (
@@ -320,12 +321,13 @@ def main() -> None:
     require_env()
 
     print(f"[DEBUG] FORCE_HEURISTIC={FORCE_HEURISTIC} (after require_env)", flush=True)
+    print(f"[DEBUG] MODEL_NAME={MODEL_NAME} (after require_env)", flush=True)
 
     client = build_client()
     print(f"[DEBUG] client={'<created>' if client else '<None>'}", flush=True)
 
-    if client:
-        print(f"[DEBUG] Using validator-injected API: {api_url_display}", flush=True)
+    if client and not FORCE_HEURISTIC:
+        print(f"[DEBUG] Using validator-injected API: {api_url_display} with model={MODEL_NAME}", flush=True)
     else:
         print(f"[DEBUG] No validator API available. Using heuristic fallback.", flush=True)
 
