@@ -1,42 +1,21 @@
-# Multi-stage build: Next.js frontend + Python backend
-FROM node:20-alpine AS frontend-builder
-
-WORKDIR /build
-COPY package*.json ./
-RUN npm ci
-
-COPY app app/
-COPY lib lib/
-COPY components components/
-COPY hooks hooks/
-COPY public public/
-COPY tsconfig.json next.config.mjs postcss.config.mjs components.json ./
-RUN npm run build
-
-# Python backend stage
-FROM python:3.11-slim
+# Runtime-only build to reduce external image pulls and validator flakiness.
+FROM mcr.microsoft.com/devcontainers/python:1-3.11-bookworm
 
 WORKDIR /app
 
-# Install minimal dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-
-# Copy Python backend
-COPY server/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY server server/
-
-# Copy built frontend from builder
-COPY --from=frontend-builder /build/.next .next
-COPY --from=frontend-builder /build/public public
-
-# Create runtime dir
-RUN mkdir -p server/.runtime
-
+ENV PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# HF Spaces uses port 7860!
+COPY server/requirements.txt ./requirements.txt
+RUN python -m pip install --upgrade pip && pip install -r requirements.txt
+
+COPY server/ server/
+COPY openenv.yaml ./openenv.yaml
+
+RUN mkdir -p server/.runtime
+
+# HF Spaces uses port 7860 for docker apps.
 EXPOSE 7860
 
 CMD ["python", "-m", "uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "7860"]
