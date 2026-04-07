@@ -331,8 +331,20 @@ def build_client() -> OpenAI | None:
 
 def main() -> None:
     load_runtime_config()
+
+    # Debug: print loaded configuration
+    print(f"[DEBUG] API_BASE_URL={API_BASE_URL[:30]}..." if API_BASE_URL else f"[DEBUG] API_BASE_URL=<empty>", flush=True)
+    print(f"[DEBUG] API_KEY={'<set>' if API_KEY else '<empty>'}", flush=True)
+    print(f"[DEBUG] MODEL_NAME={MODEL_NAME}", flush=True)
+    print(f"[DEBUG] HF_TOKEN={'<set>' if HF_TOKEN else '<empty>'}", flush=True)
+    print(f"[DEBUG] FORCE_HEURISTIC={FORCE_HEURISTIC} (before require_env)", flush=True)
+
     require_env()
+
+    print(f"[DEBUG] FORCE_HEURISTIC={FORCE_HEURISTIC} (after require_env)", flush=True)
+
     client = build_client()
+    print(f"[DEBUG] client={'<created>' if client else '<None>'}", flush=True)
 
     tasks = ["easy", "medium", "hard"]
     results = [run_task(client, task) for task in tasks]
