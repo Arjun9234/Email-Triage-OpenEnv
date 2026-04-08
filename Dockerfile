@@ -1,5 +1,5 @@
 # Runtime-only build to reduce external image pulls and validator flakiness.
-FROM mcr.microsoft.com/devcontainers/python:1-3.11-bookworm
+FROM mcr.microsoft.com/devcontainers/python:1-3.12-bookworm
 
 WORKDIR /app
 
