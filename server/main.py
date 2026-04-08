@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
-from email_triage_env import (
+from .email_triage_env import (
     EmailTriageEnv,
     Action,
     EmailAction,
