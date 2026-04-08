@@ -616,11 +616,8 @@ class EmailTriageEnv:
         accuracy = exact_correct / total
         # Easy rewards straightforward correctness heavily.
         score = 0.85 * accuracy + 0.15 * completion_ratio
-        # Strictly clamp to (0, 1) for validator
-        if score <= 0.0:
-            score = SCORE_EPSILON
-        elif score >= 1.0:
-            score = 1.0 - SCORE_EPSILON
+        # Strictly clamp to (0, 1) for validator - exclude endpoints
+        score = max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, score))
         return GraderResult(
             task=self.task_name,
             score=round(score, 6),
@@ -650,11 +647,8 @@ class EmailTriageEnv:
         spam_precision = spam_correct / max(1, len(spam_targets))
         # Medium emphasizes security hygiene in addition to accuracy.
         score = 0.65 * accuracy + 0.25 * spam_precision + 0.10 * completion_ratio
-        # Strictly clamp to (0, 1) for validator
-        if score <= 0.0:
-            score = SCORE_EPSILON
-        elif score >= 1.0:
-            score = 1.0 - SCORE_EPSILON
+        # Strictly clamp to (0, 1) for validator - exclude endpoints
+        score = max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, score))
         return GraderResult(
             task=self.task_name,
             score=round(score, 6),
@@ -686,11 +680,8 @@ class EmailTriageEnv:
             # Penalize inefficient trajectories while keeping score strictly in (0, 1).
             efficiency_penalty = min(0.20, (self.step_count - total) / total * 0.05)
         score = 0.55 * accuracy + 0.35 * high_priority_recall + 0.10 * completion_ratio - efficiency_penalty
-        # Strictly clamp to (0, 1) for validator
-        if score <= 0.0:
-            score = SCORE_EPSILON
-        elif score >= 1.0:
-            score = 1.0 - SCORE_EPSILON
+        # Strictly clamp to (0, 1) for validator - exclude endpoints
+        score = max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, score))
         return GraderResult(
             task=self.task_name,
             score=round(score, 6),
