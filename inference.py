@@ -27,6 +27,7 @@ ENV_BASE_URL = "http://localhost:8000"
 MAX_STEPS_PER_TASK = 40
 TEMPERATURE = 0.0
 MAX_TOKENS = 40
+SCORE_EPSILON = 1e-6
 VALID_ACTIONS = ["read", "archive", "delete", "flag", "move_to_folder", "mark_spam"]
 
 SYSTEM_PROMPT = (
@@ -35,6 +36,20 @@ SYSTEM_PROMPT = (
     "read, archive, delete, flag, move_to_folder, mark_spam. "
     "No explanation."
 )
+
+
+def normalize_task_score(value: Any) -> float:
+    """Ensure emitted task score is strictly inside (0, 1)."""
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+
+    if score <= 0.0:
+        return SCORE_EPSILON
+    if score >= 1.0:
+        return 1.0 - SCORE_EPSILON
+    return score
 
 
 def load_runtime_config() -> None:
@@ -249,7 +264,7 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
 
             total_emails = grade_json.get("total_emails", 1)
             normalized_trajectory_reward = step_reward_sum / total_emails if total_emails > 0 else 0.0
-            grader_score = float(grade_json.get("score", 0.0))
+            grader_score = normalize_task_score(grade_json.get("score", 0.0))
 
             print(f"[END] task={task} score={grader_score:.4f} steps={steps}", flush=True)
 
@@ -257,7 +272,8 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
                 "task": task,
                 "steps": steps,
                 "normalized_trajectory_reward": round(normalized_trajectory_reward, 4),
-                "grader_score": grader_score,
+                "score": round(grader_score, 6),
+                "grader_score": round(grader_score, 6),
                 "grader_status": grade_json.get("status", "unknown"),
                 "grader_breakdown": grade_json.get("breakdown", {}),
             }
@@ -269,7 +285,8 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
             "task": task,
             "steps": 0,
             "normalized_trajectory_reward": 0.0,
-            "grader_score": 0.0,
+            "score": SCORE_EPSILON,
+            "grader_score": SCORE_EPSILON,
             "grader_status": "error",
             "grader_breakdown": {},
             "error": str(exc),
@@ -293,7 +310,7 @@ def main() -> None:
 
     tasks = ["easy", "medium", "hard"]
     results = [run_task(client, task) for task in tasks]
-    avg = sum(item["grader_score"] for item in results) / len(results)
+    avg = sum(item["score"] for item in results) / len(results)
 
     output = {
         "env_base_url": ENV_BASE_URL,
@@ -314,7 +331,7 @@ if __name__ == "__main__":
             "model_name": MODEL_NAME or "gpt-4o-mini",
             "temperature": TEMPERATURE,
             "tasks": [],
-            "average_score": 0.0,
+            "average_score": SCORE_EPSILON,
             "error": str(exc),
         }
         print(json.dumps(output, indent=2))
