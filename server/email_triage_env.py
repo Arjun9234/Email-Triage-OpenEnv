@@ -7,6 +7,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+SCORE_EPSILON = 1e-6
+
 
 class EmailPriority(str, Enum):
     """Email priority levels"""
@@ -84,10 +86,10 @@ class StepInfo(BaseModel):
 
 
 class GraderResult(BaseModel):
-    """Deterministic task grader output in [0.0, 1.0]."""
+    """Deterministic task grader output strictly inside (0.0, 1.0)."""
 
     task: str
-    score: float = Field(ge=0.0, le=1.0)
+    score: float = Field(gt=0.0, lt=1.0)
     status: str
     message: str
     breakdown: dict[str, float]
@@ -614,9 +616,14 @@ class EmailTriageEnv:
         accuracy = exact_correct / total
         # Easy rewards straightforward correctness heavily.
         score = 0.85 * accuracy + 0.15 * completion_ratio
+        # Strictly clamp to (0, 1) for validator
+        if score <= 0.0:
+            score = SCORE_EPSILON
+        elif score >= 1.0:
+            score = 1.0 - SCORE_EPSILON
         return GraderResult(
             task=self.task_name,
-            score=round(max(0.0, min(1.0, score)), 4),
+            score=round(score, 6),
             status="complete" if completion_ratio == 1.0 else "incomplete",
             message="Easy grader: accuracy-first with light completion bonus",
             breakdown={
@@ -643,9 +650,14 @@ class EmailTriageEnv:
         spam_precision = spam_correct / max(1, len(spam_targets))
         # Medium emphasizes security hygiene in addition to accuracy.
         score = 0.65 * accuracy + 0.25 * spam_precision + 0.10 * completion_ratio
+        # Strictly clamp to (0, 1) for validator
+        if score <= 0.0:
+            score = SCORE_EPSILON
+        elif score >= 1.0:
+            score = 1.0 - SCORE_EPSILON
         return GraderResult(
             task=self.task_name,
-            score=round(max(0.0, min(1.0, score)), 4),
+            score=round(score, 6),
             status="complete" if completion_ratio == 1.0 else "incomplete",
             message="Medium grader: balances general accuracy with spam/phishing detection",
             breakdown={
@@ -671,12 +683,17 @@ class EmailTriageEnv:
         high_priority_recall = high_priority_correct / max(1, len(high_priority_ids))
         efficiency_penalty = 0.0
         if self.step_count > total:
-            # Penalize inefficient trajectories while keeping score within [0,1].
+            # Penalize inefficient trajectories while keeping score strictly in (0, 1).
             efficiency_penalty = min(0.20, (self.step_count - total) / total * 0.05)
         score = 0.55 * accuracy + 0.35 * high_priority_recall + 0.10 * completion_ratio - efficiency_penalty
+        # Strictly clamp to (0, 1) for validator
+        if score <= 0.0:
+            score = SCORE_EPSILON
+        elif score >= 1.0:
+            score = 1.0 - SCORE_EPSILON
         return GraderResult(
             task=self.task_name,
-            score=round(max(0.0, min(1.0, score)), 4),
+            score=round(score, 6),
             status="complete" if completion_ratio == 1.0 else "incomplete",
             message="Hard grader: prioritizes high-risk mail handling and efficiency",
             breakdown={
@@ -700,5 +717,7 @@ class EmailTriageEnv:
             result = self._grade_hard()
 
         payload = result.model_dump()
-        payload["normalized_trajectory_reward"] = round(self._normalized_cumulative_score(), 4)
+        payload["normalized_trajectory_reward"] = max(
+            SCORE_EPSILON, min(1.0 - SCORE_EPSILON, round(self._normalized_cumulative_score(), 4))
+        )
         return payload
