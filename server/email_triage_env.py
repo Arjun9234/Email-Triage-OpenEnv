@@ -492,12 +492,12 @@ class EmailTriageEnv:
         return obs, reward, done, info.model_dump()
 
     def _normalized_cumulative_score(self) -> float:
-        """Normalized cumulative score clipped to [0.0, 1.0]."""
+        """Normalized cumulative score clipped to (0.0, 1.0)."""
 
         if not self.emails:
-            return 0.0
+            return SCORE_EPSILON  # Never return exactly 0.0
         raw = self.cumulative_reward / len(self.emails)
-        return max(0.0, min(1.0, raw))
+        return max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, raw))
 
     def _next_unprocessed_index(self) -> int:
         """Find next unprocessed email index."""
