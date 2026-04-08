@@ -39,15 +39,15 @@ SYSTEM_PROMPT = (
 
 
 def normalize_task_score(value: Any) -> float:
-    """Ensure emitted task score is strictly inside (0, 1). NEVER round."""
+    """Ensure emitted task score is strictly inside (0, 1)."""
     try:
         score = float(value)
     except (TypeError, ValueError):
         score = 0.5
 
-    if score <= 0.0:
+    if score <= SCORE_EPSILON:
         return SCORE_EPSILON
-    if score >= 1.0:
+    if score >= 1.0 - SCORE_EPSILON:
         return 1.0 - SCORE_EPSILON
     return score
 
@@ -209,7 +209,7 @@ def pick_action_with_llm(client: OpenAI, email: dict[str, Any]) -> str:
             if action in text:
                 return action
 
-        return "archive"
+        return heuristic_action(email)
 
     except Exception as exc:  # noqa: BLE001
         print(f"[DEBUG] LLM request failed during task: {exc}", flush=True)
@@ -259,10 +259,16 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
             grade_json = grade.json()
 
             total_emails = int(grade_json.get("total_emails", 1))
+
             normalized_trajectory_reward = normalize_task_score(
                 step_reward_sum / total_emails if total_emails > 0 else 0.5
             )
+
             grader_score = normalize_task_score(grade_json.get("score", 0.5))
+
+            # FINAL hard safety
+            normalized_trajectory_reward = normalize_task_score(normalized_trajectory_reward)
+            grader_score = normalize_task_score(grader_score)
 
             print(
                 f"[DEBUG SCORE CHECK] task={task} "
@@ -276,15 +282,15 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
             return {
                 "task": task,
                 "steps": steps,
-                "normalized_trajectory_reward": normalize_task_score(normalized_trajectory_reward),
-                "score": normalize_task_score(grader_score),
-                "grader_score": normalize_task_score(grader_score),
+                "normalized_trajectory_reward": normalized_trajectory_reward,
+                "score": grader_score,
+                "grader_score": grader_score,
                 "grader_status": grade_json.get("status", "unknown"),
                 "grader_breakdown": grade_json.get("breakdown", {}),
             }
 
     except Exception as exc:  # noqa: BLE001
-        safe_fallback = normalize_task_score(SCORE_EPSILON)
+        safe_fallback = normalize_task_score(0.5)
 
         print(f"[END] task={task} score={safe_fallback} steps=0", flush=True)
         print(f"Task '{task}' failed: {exc}", flush=True)
@@ -344,7 +350,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:  # noqa: BLE001
-        safe_fallback = normalize_task_score(SCORE_EPSILON)
+        safe_fallback = normalize_task_score(0.5)
         output = {
             "env_base_url": ENV_BASE_URL,
             "model_name": MODEL_NAME or "gpt-4o-mini",

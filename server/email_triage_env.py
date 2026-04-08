@@ -10,6 +10,20 @@ from pydantic import BaseModel, Field
 SCORE_EPSILON = 1e-6
 
 
+def clamp_open_score(value: float) -> float:
+    """Force any score strictly inside (0, 1) with no endpoint leakage."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = 0.5
+
+    if value <= 0.0:
+        return SCORE_EPSILON
+    if value >= 1.0:
+        return 1.0 - SCORE_EPSILON
+    return value
+
+
 class EmailPriority(str, Enum):
     """Email priority levels"""
     HIGH = "high"
@@ -40,7 +54,6 @@ class Email(BaseModel):
 
 class TaskMetadata(BaseModel):
     """Task-level metadata presented to the agent."""
-
     id: str
     name: str
     description: str
@@ -68,7 +81,6 @@ class Action(BaseModel):
 
 class Reward(BaseModel):
     """Reward signal"""
-
     score: float = Field(ge=-1.0, le=1.0)
     reason: str
     progress: float = Field(ge=0.0, le=1.0)
@@ -77,7 +89,6 @@ class Reward(BaseModel):
 
 class StepInfo(BaseModel):
     """Additional info returned by step for diagnostics."""
-
     expected_action: str
     was_repeat: bool
     was_valid: bool
@@ -87,7 +98,6 @@ class StepInfo(BaseModel):
 
 class GraderResult(BaseModel):
     """Deterministic task grader output strictly inside (0.0, 1.0)."""
-
     task: str
     score: float = Field(gt=0.0, lt=1.0)
     status: str
@@ -149,11 +159,11 @@ class EmailTriageEnv:
                 },
             ],
             "correct_actions": {
-                "email_1": "read",  # Important work email
-                "email_2": "archive",  # Unimportant
-                "email_3": "flag",  # Requires action
-                "email_4": "delete",  # Social media noise
-                "email_5": "read",  # Security alert
+                "email_1": "read",
+                "email_2": "archive",
+                "email_3": "flag",
+                "email_4": "delete",
+                "email_5": "read",
             },
         },
         "medium": {
@@ -228,14 +238,14 @@ class EmailTriageEnv:
                 },
             ],
             "correct_actions": {
-                "email_1": "read",  # Client proposal
-                "email_2": "archive",  # Reference info
-                "email_3": "mark_spam",  # Phishing
-                "email_4": "flag",  # HR action item
-                "email_5": "delete",  # Marketing
-                "email_6": "read",  # Code review
-                "email_7": "flag",  # Finance
-                "email_8": "mark_spam",  # Spam
+                "email_1": "read",
+                "email_2": "archive",
+                "email_3": "mark_spam",
+                "email_4": "flag",
+                "email_5": "delete",
+                "email_6": "read",
+                "email_7": "flag",
+                "email_8": "mark_spam",
             },
         },
         "hard": {
@@ -326,16 +336,16 @@ class EmailTriageEnv:
                 },
             ],
             "correct_actions": {
-                "email_1": "read",  # Executive
-                "email_2": "read",  # Work to review
-                "email_3": "read",  # Security action
-                "email_4": "flag",  # Contract negotiation
-                "email_5": "archive",  # Retention decision
-                "email_6": "delete",  # Entertainment
-                "email_7": "flag",  # Legal signature
-                "email_8": "archive",  # Reference/decision
-                "email_9": "read",  # Security alert
-                "email_10": "delete",  # Promotional
+                "email_1": "read",
+                "email_2": "read",
+                "email_3": "read",
+                "email_4": "flag",
+                "email_5": "archive",
+                "email_6": "delete",
+                "email_7": "flag",
+                "email_8": "archive",
+                "email_9": "read",
+                "email_10": "delete",
             },
         },
     }
@@ -344,12 +354,12 @@ class EmailTriageEnv:
         """Initialize the environment with a specific task"""
         if task not in self.TASKS:
             raise ValueError(f"Task must be one of {list(self.TASKS.keys())}")
-        
+
         self.task_name = task
         self.task_config = self.TASKS[task]
         self.emails = [Email(**email) for email in self.task_config["emails"]]
         self.correct_actions = self.task_config["correct_actions"]
-        
+
         self.current_email_index = 0
         self.actions_taken: dict[str, str] = {}
         self.action_history: list[dict[str, str]] = []
@@ -430,7 +440,11 @@ class EmailTriageEnv:
 
         # Partial credit for cautious handling of important/security-like items
         partial_credit = 0.0
-        if not is_correct and correct_action in {"read", "flag"} and action.action.value in {"read", "flag"}:
+        if (
+            not is_correct
+            and correct_action in {"read", "flag"}
+            and action.action.value in {"read", "flag"}
+        ):
             partial_credit = 0.35
 
         if is_correct:
@@ -475,6 +489,7 @@ class EmailTriageEnv:
 
         # Move to next email
         if done and processed_count == total_count:
+            self.current_email_index = len(self.emails)
             obs = self._get_observation("Task completed")
         elif done:
             obs = self._get_observation("Episode ended due to max steps")
@@ -492,16 +507,14 @@ class EmailTriageEnv:
         return obs, reward, done, info.model_dump()
 
     def _normalized_cumulative_score(self) -> float:
-        """Normalized cumulative score clipped to (0.0, 1.0)."""
-
+        """Normalized cumulative score strictly inside (0, 1)."""
         if not self.emails:
-            return SCORE_EPSILON  # Never return exactly 0.0
+            return SCORE_EPSILON
         raw = self.cumulative_reward / len(self.emails)
-        return max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, raw))
+        return clamp_open_score(raw)
 
     def _next_unprocessed_index(self) -> int:
         """Find next unprocessed email index."""
-
         for idx, email in enumerate(self.emails):
             if email.id not in self.actions_taken:
                 return idx
@@ -512,7 +525,7 @@ class EmailTriageEnv:
         current_email = None
         if self.current_email_index < len(self.emails):
             current_email = self.emails[self.current_email_index]
-        
+
         email_list = [
             {
                 "id": e.id,
@@ -526,7 +539,7 @@ class EmailTriageEnv:
             }
             for e in self.emails
         ]
-        
+
         return Observation(
             task=TaskMetadata(
                 id=self.task_name,
@@ -544,14 +557,13 @@ class EmailTriageEnv:
 
     def state(self) -> dict:
         """Get current environment state (OpenEnv state API)."""
-
         return {
             "task": self.task_name,
             "task_description": self.task_config["description"],
             "step_count": self.step_count,
             "max_steps": self.max_steps,
             "cumulative_reward": round(self.cumulative_reward, 4),
-            "normalized_score": round(self._normalized_cumulative_score(), 4),
+            "normalized_score": clamp_open_score(self._normalized_cumulative_score()),
             "correct_action_count": self.correct_action_count,
             "actions_taken": self.actions_taken,
             "progress": f"{len(self.actions_taken)}/{len(self.emails)}",
@@ -560,12 +572,10 @@ class EmailTriageEnv:
 
     def get_state(self) -> dict:
         """Backwards-compatible alias."""
-
         return self.state()
 
     def export_session_state(self) -> dict:
         """Serialize environment internals for persistence across process lifecycles."""
-
         return {
             "task": self.task_name,
             "current_email_index": self.current_email_index,
@@ -580,7 +590,6 @@ class EmailTriageEnv:
     @classmethod
     def from_session_state(cls, data: dict) -> "EmailTriageEnv":
         """Rebuild environment from persisted session state."""
-
         task = str(data.get("task", "easy"))
         env = cls(task=task)
 
@@ -614,13 +623,13 @@ class EmailTriageEnv:
         )
         completion_ratio = len(self.actions_taken) / total
         accuracy = exact_correct / total
-        # Easy rewards straightforward correctness heavily.
-        score = 0.85 * accuracy + 0.15 * completion_ratio
-        # Strictly clamp to (0, 1) for validator - exclude endpoints
-        score = max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, score))
+
+        raw_score = 0.85 * accuracy + 0.15 * completion_ratio
+        score = clamp_open_score(raw_score)
+
         return GraderResult(
             task=self.task_name,
-            score=round(score, 6),
+            score=score,
             status="complete" if completion_ratio == 1.0 else "incomplete",
             message="Easy grader: accuracy-first with light completion bonus",
             breakdown={
@@ -645,13 +654,13 @@ class EmailTriageEnv:
         completion_ratio = len(self.actions_taken) / total
         accuracy = exact_correct / total
         spam_precision = spam_correct / max(1, len(spam_targets))
-        # Medium emphasizes security hygiene in addition to accuracy.
-        score = 0.65 * accuracy + 0.25 * spam_precision + 0.10 * completion_ratio
-        # Strictly clamp to (0, 1) for validator - exclude endpoints
-        score = max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, score))
+
+        raw_score = 0.65 * accuracy + 0.25 * spam_precision + 0.10 * completion_ratio
+        score = clamp_open_score(raw_score)
+
         return GraderResult(
             task=self.task_name,
-            score=round(score, 6),
+            score=score,
             status="complete" if completion_ratio == 1.0 else "incomplete",
             message="Medium grader: balances general accuracy with spam/phishing detection",
             breakdown={
@@ -672,19 +681,26 @@ class EmailTriageEnv:
         high_priority_correct = sum(
             1 for eid in high_priority_ids if self.actions_taken.get(eid) == self.correct_actions[eid]
         )
+
         completion_ratio = len(self.actions_taken) / total
         accuracy = exact_correct / total
         high_priority_recall = high_priority_correct / max(1, len(high_priority_ids))
+
         efficiency_penalty = 0.0
         if self.step_count > total:
-            # Penalize inefficient trajectories while keeping score strictly in (0, 1).
             efficiency_penalty = min(0.20, (self.step_count - total) / total * 0.05)
-        score = 0.55 * accuracy + 0.35 * high_priority_recall + 0.10 * completion_ratio - efficiency_penalty
-        # Strictly clamp to (0, 1) for validator - exclude endpoints
-        score = max(SCORE_EPSILON, min(1.0 - SCORE_EPSILON, score))
+
+        raw_score = (
+            0.55 * accuracy
+            + 0.35 * high_priority_recall
+            + 0.10 * completion_ratio
+            - efficiency_penalty
+        )
+        score = clamp_open_score(raw_score)
+
         return GraderResult(
             task=self.task_name,
-            score=round(score, 6),
+            score=score,
             status="complete" if completion_ratio == 1.0 else "incomplete",
             message="Hard grader: prioritizes high-risk mail handling and efficiency",
             breakdown={
@@ -698,8 +714,7 @@ class EmailTriageEnv:
         )
 
     def grade(self) -> dict:
-        """Run deterministic per-task grader and return score in [0.0, 1.0]."""
-
+        """Run deterministic per-task grader and return scores strictly inside (0, 1)."""
         if self.task_name == "easy":
             result = self._grade_easy()
         elif self.task_name == "medium":
@@ -708,13 +723,9 @@ class EmailTriageEnv:
             result = self._grade_hard()
 
         payload = result.model_dump()
-        # Clamp and round with epsilon safety (use 6 decimals to preserve epsilon)
-        normalized = self._normalized_cumulative_score()  # Already safely clamped
-        rounded = round(normalized, 6)
-        # Re-clamp after rounding to handle edge cases
-        if rounded <= 0.0:
-            rounded = SCORE_EPSILON
-        elif rounded >= 1.0:
-            rounded = 1.0 - SCORE_EPSILON
-        payload["normalized_trajectory_reward"] = rounded
+
+        # Hard clamp all outward-facing score fields
+        payload["score"] = clamp_open_score(payload.get("score", 0.5))
+        payload["normalized_trajectory_reward"] = clamp_open_score(self._normalized_cumulative_score())
+
         return payload
