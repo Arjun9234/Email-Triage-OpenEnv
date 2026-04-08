@@ -171,10 +171,8 @@ def heuristic_action(email: dict[str, Any]) -> str:
 
     if priority == "high":
         return "read"
-    if has_attachment and priority == "medium":
-        return "read"
-    if has_attachment and priority == "high":
-        return "flag"
+    if has_attachment and priority in ["medium", "high"]:
+        return "flag" if priority == "high" else "read"
     if priority == "low":
         return "archive"
     return "archive"
@@ -266,7 +264,7 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
             normalized_trajectory_reward = step_reward_sum / total_emails if total_emails > 0 else 0.0
             grader_score = normalize_task_score(grade_json.get("score", 0.0))
 
-            print(f"[END] task={task} score={grader_score:.4f} steps={steps}", flush=True)
+            print(f"[END] task={task} score={grader_score:.6f} steps={steps}", flush=True)
 
             return {
                 "task": task,
@@ -310,14 +308,16 @@ def main() -> None:
 
     tasks = ["easy", "medium", "hard"]
     results = [run_task(client, task) for task in tasks]
-    avg = sum(item["score"] for item in results) / len(results)
+
+    avg_raw = sum(item["score"] for item in results) / len(results)
+    avg = normalize_task_score(avg_raw)  # strictly inside (0,1)
 
     output = {
         "env_base_url": ENV_BASE_URL,
         "model_name": MODEL_NAME,
         "temperature": TEMPERATURE,
         "tasks": results,
-        "average_score": round(avg, 4),
+        "average_score": round(avg, 6),
     }
     print(json.dumps(output, indent=2))
 
