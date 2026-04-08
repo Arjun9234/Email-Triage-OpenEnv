@@ -708,7 +708,13 @@ class EmailTriageEnv:
             result = self._grade_hard()
 
         payload = result.model_dump()
-        payload["normalized_trajectory_reward"] = max(
-            SCORE_EPSILON, min(1.0 - SCORE_EPSILON, round(self._normalized_cumulative_score(), 4))
-        )
+        # Clamp and round with epsilon safety (use 6 decimals to preserve epsilon)
+        normalized = self._normalized_cumulative_score()  # Already safely clamped
+        rounded = round(normalized, 6)
+        # Re-clamp after rounding to handle edge cases
+        if rounded <= 0.0:
+            rounded = SCORE_EPSILON
+        elif rounded >= 1.0:
+            rounded = 1.0 - SCORE_EPSILON
+        payload["normalized_trajectory_reward"] = rounded
         return payload

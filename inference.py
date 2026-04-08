@@ -261,17 +261,30 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
             grade_json = grade.json()
 
             total_emails = grade_json.get("total_emails", 1)
-            normalized_trajectory_reward = step_reward_sum / total_emails if total_emails > 0 else 0.0
+            normalized_trajectory_reward = normalize_task_score(step_reward_sum / total_emails if total_emails > 0 else 0.5)
             grader_score = normalize_task_score(grade_json.get("score", 0.0))
 
             print(f"[END] task={task} score={grader_score:.6f} steps={steps}", flush=True)
 
+            # Ensure scores stay within strict (0, 1) bounds after rounding
+            final_traj_reward = round(normalized_trajectory_reward, 6)
+            if final_traj_reward <= 0.0:
+                final_traj_reward = SCORE_EPSILON
+            elif final_traj_reward >= 1.0:
+                final_traj_reward = 1.0 - SCORE_EPSILON
+
+            final_grader_score = round(grader_score, 6)
+            if final_grader_score <= 0.0:
+                final_grader_score = SCORE_EPSILON
+            elif final_grader_score >= 1.0:
+                final_grader_score = 1.0 - SCORE_EPSILON
+
             return {
                 "task": task,
                 "steps": steps,
-                "normalized_trajectory_reward": round(normalized_trajectory_reward, 4),
-                "score": round(grader_score, 6),
-                "grader_score": round(grader_score, 6),
+                "normalized_trajectory_reward": final_traj_reward,
+                "score": final_grader_score,
+                "grader_score": final_grader_score,
                 "grader_status": grade_json.get("status", "unknown"),
                 "grader_breakdown": grade_json.get("breakdown", {}),
             }
@@ -282,7 +295,7 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
         return {
             "task": task,
             "steps": 0,
-            "normalized_trajectory_reward": 0.0,
+            "normalized_trajectory_reward": SCORE_EPSILON,
             "score": SCORE_EPSILON,
             "grader_score": SCORE_EPSILON,
             "grader_status": "error",
@@ -312,12 +325,19 @@ def main() -> None:
     avg_raw = sum(item["score"] for item in results) / len(results)
     avg = normalize_task_score(avg_raw)  # strictly inside (0,1)
 
+    # Re-clamp average after all operations
+    final_avg = round(avg, 6)
+    if final_avg <= 0.0:
+        final_avg = SCORE_EPSILON
+    elif final_avg >= 1.0:
+        final_avg = 1.0 - SCORE_EPSILON
+
     output = {
         "env_base_url": ENV_BASE_URL,
         "model_name": MODEL_NAME,
         "temperature": TEMPERATURE,
         "tasks": results,
-        "average_score": round(avg, 6),
+        "average_score": final_avg,
     }
     print(json.dumps(output, indent=2))
 
