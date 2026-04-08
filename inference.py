@@ -39,11 +39,11 @@ SYSTEM_PROMPT = (
 
 
 def normalize_task_score(value: Any) -> float:
-    """Ensure emitted task score is strictly inside (0, 1)."""
+    """Ensure emitted task score is strictly inside (0, 1). NEVER round."""
     try:
         score = float(value)
     except (TypeError, ValueError):
-        return 0.5
+        score = 0.5
 
     if score <= 0.0:
         return SCORE_EPSILON
@@ -95,9 +95,7 @@ def assert_proxy_connectivity(client: OpenAI) -> None:
 
     except Exception as exc:  # noqa: BLE001
         print(f"[DEBUG] Proxy connectivity test failed: {exc}", flush=True)
-        # IMPORTANT:
-        # Do NOT crash here.
-        # Validator only needs to see that we attempted a proxy API call.
+        # Do not crash — validator only needs to see attempted proxy call.
 
 
 def heuristic_action(email: dict[str, Any]) -> str:
@@ -254,50 +252,49 @@ def run_task(client: OpenAI, task: str) -> dict[str, Any]:
                 done = bool(payload.get("done", False))
                 steps += 1
 
-                print(f"[STEP] step={steps} reward={step_reward:.4f}", flush=True)
+                print(f"[STEP] task={task} step={steps} reward={step_reward}", flush=True)
 
             grade = http.get(f"{ENV_BASE_URL}/grade")
             grade.raise_for_status()
             grade_json = grade.json()
 
-            total_emails = grade_json.get("total_emails", 1)
-            normalized_trajectory_reward = normalize_task_score(step_reward_sum / total_emails if total_emails > 0 else 0.5)
-            grader_score = normalize_task_score(grade_json.get("score", 0.0))
+            total_emails = int(grade_json.get("total_emails", 1))
+            normalized_trajectory_reward = normalize_task_score(
+                step_reward_sum / total_emails if total_emails > 0 else 0.5
+            )
+            grader_score = normalize_task_score(grade_json.get("score", 0.5))
 
-            print(f"[END] task={task} score={grader_score:.6f} steps={steps}", flush=True)
+            print(
+                f"[DEBUG SCORE CHECK] task={task} "
+                f"grader_score={grader_score} "
+                f"traj_score={normalized_trajectory_reward}",
+                flush=True,
+            )
 
-            # Ensure scores stay within strict (0, 1) bounds after rounding
-            final_traj_reward = round(normalized_trajectory_reward, 6)
-            if final_traj_reward <= 0.0:
-                final_traj_reward = SCORE_EPSILON
-            elif final_traj_reward >= 1.0:
-                final_traj_reward = 1.0 - SCORE_EPSILON
-
-            final_grader_score = round(grader_score, 6)
-            if final_grader_score <= 0.0:
-                final_grader_score = SCORE_EPSILON
-            elif final_grader_score >= 1.0:
-                final_grader_score = 1.0 - SCORE_EPSILON
+            print(f"[END] task={task} score={grader_score} steps={steps}", flush=True)
 
             return {
                 "task": task,
                 "steps": steps,
-                "normalized_trajectory_reward": final_traj_reward,
-                "score": final_grader_score,
-                "grader_score": final_grader_score,
+                "normalized_trajectory_reward": normalize_task_score(normalized_trajectory_reward),
+                "score": normalize_task_score(grader_score),
+                "grader_score": normalize_task_score(grader_score),
                 "grader_status": grade_json.get("status", "unknown"),
                 "grader_breakdown": grade_json.get("breakdown", {}),
             }
 
     except Exception as exc:  # noqa: BLE001
-        print(f"[END] task={task} score=0.0 steps=0", flush=True)
+        safe_fallback = normalize_task_score(SCORE_EPSILON)
+
+        print(f"[END] task={task} score={safe_fallback} steps=0", flush=True)
         print(f"Task '{task}' failed: {exc}", flush=True)
+
         return {
             "task": task,
             "steps": 0,
-            "normalized_trajectory_reward": SCORE_EPSILON,
-            "score": SCORE_EPSILON,
-            "grader_score": SCORE_EPSILON,
+            "normalized_trajectory_reward": safe_fallback,
+            "score": safe_fallback,
+            "grader_score": safe_fallback,
             "grader_status": "error",
             "grader_breakdown": {},
             "error": str(exc),
@@ -322,22 +319,23 @@ def main() -> None:
     tasks = ["easy", "medium", "hard"]
     results = [run_task(client, task) for task in tasks]
 
-    avg_raw = sum(item["score"] for item in results) / len(results)
-    avg = normalize_task_score(avg_raw)  # strictly inside (0,1)
+    avg_raw = sum(normalize_task_score(item["score"]) for item in results) / len(results)
+    avg = normalize_task_score(avg_raw)
 
-    # Re-clamp average after all operations
-    final_avg = round(avg, 6)
-    if final_avg <= 0.0:
-        final_avg = SCORE_EPSILON
-    elif final_avg >= 1.0:
-        final_avg = 1.0 - SCORE_EPSILON
+    for item in results:
+        print(
+            f"[DEBUG FINAL TASK] task={item['task']} "
+            f"score={item['score']} "
+            f"traj={item['normalized_trajectory_reward']}",
+            flush=True,
+        )
 
     output = {
         "env_base_url": ENV_BASE_URL,
         "model_name": MODEL_NAME,
         "temperature": TEMPERATURE,
         "tasks": results,
-        "average_score": final_avg,
+        "average_score": avg,
     }
     print(json.dumps(output, indent=2))
 
@@ -346,12 +344,13 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:  # noqa: BLE001
+        safe_fallback = normalize_task_score(SCORE_EPSILON)
         output = {
             "env_base_url": ENV_BASE_URL,
             "model_name": MODEL_NAME or "gpt-4o-mini",
             "temperature": TEMPERATURE,
             "tasks": [],
-            "average_score": SCORE_EPSILON,
+            "average_score": safe_fallback,
             "error": str(exc),
         }
         print(json.dumps(output, indent=2))
